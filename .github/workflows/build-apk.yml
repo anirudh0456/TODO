@@ -12,61 +12,51 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Download repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Install Java 17
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      # 3. Set up Gradle
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      # 4. Configure Android SDK
       - name: Configure Android SDK
         run: |
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
           echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
 
-      # 5. Check SDK Manager
       - name: Check SDK Manager
         run: |
           ls -la "$ANDROID_HOME/cmdline-tools"
           sdkmanager --version
 
-      # 6. Install Android SDK components
       - name: Install Android SDK components
         run: |
           yes | sdkmanager --licenses || true
           sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-      # 7. Extract Android project
       - name: Extract project
         run: |
           unzip -q TODO-GitHub-AI-Build-Ready.zip -d extracted
 
-      # 8. Fix Java network imports
       - name: Fix Java network imports
         run: |
           FILE="extracted/TODO/app/build.gradle.kts"
           sed -i '1i import java.net.URL\nimport java.net.HttpURLConnection' "$FILE"
-          sed -i 's/java\.net\.URL/URL/g; s/java\.net\.HttpURLConnection/HttpURLConnection/g' "$FILE"
+          sed -i '3,$s/java\.net\.URL/URL/g; 3,$s/java\.net\.HttpURLConnection/HttpURLConnection/g' "$FILE"
 
-      # 9. Build Android APK
       - name: Build APK
         working-directory: extracted/TODO
         run: |
           gradle --no-daemon assembleDebug
 
-      # 10. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
