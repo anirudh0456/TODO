@@ -1,22 +1,198 @@
-
 name: Build TODO APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    outputs:
+      project_dir: ${{ steps.project.outputs.dir }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Extract project ZIP
+        shell: bash
+        run: |
+          mkdir -p extracted
+
+          if [ -f "TODO-android-final.zip" ]; then
+            echo "Found TODO-android-final.zip"
+            unzip -q "TODO-android-final.zip" -d extracted
+
+          elif [ -f "TODO-GitHub-AI-Build-Ready.zip" ]; then
+            echo "Found older project ZIP"
+            unzip -q "TODO-GitHub-AI-Build-Ready.zip" -d extracted
+
+          elif [ -f "TODO-android-fixed.zip" ]; then
+            echo "Found TODO-android-fixed.zip"
+            unzip -q "TODO-android-fixed.zip" -d extracted
+
+          elif [ -f "settings.gradle.kts" ] || [ -f "TODO/settings.gradle.kts" ]; then
+            echo "Project already extracted"
+
+          else
+            echo "ERROR: No supported project ZIP or project folder found."
+            echo "Files in repository:"
+            ls -la
+            exit 1
+          fi
+
+      - name: Locate Android project
+        id: project
+        shell: bash
+        run: |
+          if [ -f "settings.gradle.kts" ]; then
+            DIR="."
+          elif [ -f "TODO/settings.gradle.kts" ]; then
+            DIR="TODO"
+          elif [ -f "extracted/settings.gradle.kts" ]; then
+            DIR="extracted"
+          elif [ -f "extracted/TODO/settings.gradle.kts" ]; then
+            DIR="extracted/TODO"
+          else
+            echo "ERROR: settings.gradle.kts not found."
+            find . -maxdepth 4 -name settings.gradle.kts
+            exit 1
+          fi
+
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "Android project found in: $DIR"
+
       - name: Set up Java 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+
+          sdkmanager \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+      - name: Download optional font
+        working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
+        run: |
+          mkdir -p app/src/main/res/font
+
+          FONT="app/src/main/res/font/plus_jakarta_sans.ttf"
+
+          curl -fsSL --max-time 30 \
+            -o "$FONT" \
+            "https://github.com/google/fonts/raw/main/ofl/plusjakartasans/PlusJakartaSans%5Bwght%5D.ttf" \
+            || true
+
+          if [ ! -s "$FONT" ] || [ "$(stat -c%s "$FONT")" -lt 50000 ]; then
+            rm -f "$FONT"
+            echo "Optional font unavailable. System font fallback will be used."
+          fi
+
+      - name: Build debug APK
+        working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
+        run: |
+          set -o pipefail
+
+          gradle --no-daemon --stacktrace assembleDebug 2>&1 | tee build.log
+
+      - name: Verify APK exists
+        working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          ls -lh "$APK"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TODO-debug-apk
+          path: ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TODO-build-log
+          path: ${{ steps.project.outputs.dir }}/build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  unit-tests:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract project ZIP
+        shell: bash
+        run: |
+          mkdir -p extracted
+
+          if [ -f "TODO-android-final.zip" ]; then
+            unzip -q "TODO-android-final.zip" -d extracted
+          elif [ -f "TODO-GitHub-AI-Build-Ready.zip" ]; then
+            unzip -q "TODO-GitHub-AI-Build-Ready.zip" -d extracted
+          elif [ -f "TODO-android-fixed.zip" ]; then
+            unzip -q "TODO-android-fixed.zip" -d extracted
+          fi
+
+      - name: Locate project
+        id: project
+        shell: bash
+        run: |
+          if [ -f "settings.gradle.kts" ]; then
+            DIR="."
+          elif [ -f "TODO/settings.gradle.kts" ]; then
+            DIR="TODO"
+          elif [ -f "extracted/settings.gradle.kts" ]; then
+            DIR="extracted"
+          elif [ -f "extracted/TODO/settings.gradle.kts" ]; then
+            DIR="extracted/TODO"
+          else
+            echo "ERROR: Project not found."
+            exit 1
+          fi
+
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
@@ -26,41 +202,120 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Configure Android SDK
-        run: |
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Check SDK Manager
+      - name: Install SDK
         run: |
-          ls -la "$ANDROID_HOME/cmdline-tools"
-          sdkmanager --version
-
-      - name: Install Android SDK components
-        run: |
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Extract project
+      - name: Run unit tests
+        working-directory: ${{ steps.project.outputs.dir }}
         run: |
-          unzip -q TODO-GitHub-AI-Build-Ready.zip -d extracted
+          gradle --no-daemon --stacktrace testDebugUnitTest
 
-      - name: Fix Java network imports
+  smoke-test:
+    name: Android Emulator Smoke Test
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract project ZIP
+        shell: bash
         run: |
-          FILE="extracted/TODO/app/build.gradle.kts"
-          sed -i '1i import java.net.URL\nimport java.net.HttpURLConnection' "$FILE"
-          sed -i '3,$s/java\.net\.URL/URL/g; 3,$s/java\.net\.HttpURLConnection/HttpURLConnection/g' "$FILE"
+          mkdir -p extracted
 
-      - name: Build APK
-        working-directory: extracted/TODO
+          if [ -f "TODO-android-final.zip" ]; then
+            unzip -q "TODO-android-final.zip" -d extracted
+          elif [ -f "TODO-GitHub-AI-Build-Ready.zip" ]; then
+            unzip -q "TODO-GitHub-AI-Build-Ready.zip" -d extracted
+          elif [ -f "TODO-android-fixed.zip" ]; then
+            unzip -q "TODO-android-fixed.zip" -d extracted
+          fi
+
+      - name: Locate project
+        id: project
+        shell: bash
         run: |
-          gradle --no-daemon assembleDebug
+          if [ -f "settings.gradle.kts" ]; then
+            DIR="."
+          elif [ -f "TODO/settings.gradle.kts" ]; then
+            DIR="TODO"
+          elif [ -f "extracted/settings.gradle.kts" ]; then
+            DIR="extracted"
+          elif [ -f "extracted/TODO/settings.gradle.kts" ]; then
+            DIR="extracted/TODO"
+          else
+            echo "ERROR: Project not found."
+            exit 1
+          fi
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
         with:
           name: TODO-debug-apk
-          path: extracted/TODO/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          path: ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run Android 14 emulator test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          working-directory: ${{ steps.project.outputs.dir }}
+          script: |
+            mkdir -p test-evidence
+
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+
+            adb wait-for-device
+            adb install -r "$APK"
+
+            adb logcat -c
+
+            adb shell am start -W -n com.todo.app/.MainActivity
+
+            sleep 15
+
+            adb exec-out screencap -p > test-evidence/screenshot.png
+
+            if ! adb shell pidof com.todo.app >/dev/null; then
+              echo "ERROR: TODO app is not running."
+              exit 1
+            fi
+
+            adb logcat -d > test-evidence/logcat.txt
+
+            if grep -q "FATAL EXCEPTION" test-evidence/logcat.txt; then
+              echo "ERROR: App crash detected."
+              exit 1
+            fi
+
+            echo "App remained running after launch."
+            echo "Screenshot saved. Visual inspection is still required."
+
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TODO-emulator-evidence
+          path: ${{ steps.project.outputs.dir }}/test-evidence/
+          if-no-files-found: ignore
           retention-days: 14
