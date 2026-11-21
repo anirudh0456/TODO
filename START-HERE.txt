@@ -1,0 +1,8 @@
+TODO - upload instructions
+
+1. Unzip this file.
+2. Create a GitHub repository and upload EVERYTHING you see (the TODO folder and the .github folder), or only the contents of the TODO folder.
+3. Actions tab -> Build TODO APK -> Run workflow.
+4. Download "TODO-debug-apk" from the run Artifacts.
+
+Nothing here was compiled by the author; the workflow does the real build, unit tests and an emulator test. See TODO/AUDIT-REPORT.md.
